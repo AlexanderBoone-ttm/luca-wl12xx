@@ -339,16 +339,40 @@ static void enable_board_wakeup_source(void)
 		OMAP_WAKEUP_EN | OMAP_PIN_INPUT_PULLUP);
 }
 
-void __init zoom_peripherals_init(void)
+static void __init zoom_wilink_init(void)
 {
 	int ret;
 
 	omap_zoom_wlan_data.irq = gpio_to_irq(OMAP_ZOOM_WLAN_IRQ_GPIO);
+
+	ret = gpio_request_one(OMAP_ZOOM_WLAN_IRQ_GPIO, GPIOF_IN,
+			       "OMAP_ZOOM_WLAN_IRQ_GPIO");
+	if (ret) {
+		pr_err("error requesting wl12xx gpio: %d\n", ret);
+		goto out;
+	}
+
+	ret = irq_set_irq_type(gpio_to_irq(OMAP_ZOOM_WLAN_IRQ_GPIO),
+			       IRQ_TYPE_LEVEL_HIGH);
+	if (ret) {
+		pr_err("error setting wl12xx irq type: %d\n", ret);
+		goto free;
+	}
+
 	ret = wl12xx_set_platform_data(&omap_zoom_wlan_data);
-
-	if (ret)
+	if (ret) {
 		pr_err("error setting wl12xx data: %d\n", ret);
+		goto free;
+	}
+out:
+	return;
+free:
+	gpio_free(OMAP_ZOOM_WLAN_IRQ_GPIO);
+}
 
+void __init zoom_peripherals_init(void)
+{
+	zoom_wilink_init();
 	omap_hsmmc_init(mmc);
 	omap_i2c_init();
 	pwm_add_table(zoom_pwm_lookup, ARRAY_SIZE(zoom_pwm_lookup));

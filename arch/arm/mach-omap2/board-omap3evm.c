@@ -612,12 +612,31 @@ static void __init omap3_evm_wl12xx_init(void)
 
 	/* WL12xx WLAN Init */
 	omap3evm_wlan_data.irq = gpio_to_irq(OMAP3EVM_WLAN_IRQ_GPIO);
+
+	ret = gpio_request_one(OMAP3EVM_WLAN_IRQ_GPIO, GPIOF_IN,
+			       "OMAP3EVM_WLAN_IRQ_GPIO");
+	if (ret) {
+		pr_err("error requesting wl12xx gpio: %d\n", ret);
+		goto out;
+	}
+
+	ret = irq_set_irq_type(gpio_to_irq(OMAP3EVM_WLAN_IRQ_GPIO),
+			       IRQ_TYPE_LEVEL_HIGH);
+	if (ret) {
+		pr_err("error setting wl12xx irq type: %d\n", ret);
+		goto free;
+	}
+
 	ret = wl12xx_set_platform_data(&omap3evm_wlan_data);
 	if (ret)
 		pr_err("error setting wl12xx data: %d\n", ret);
 	ret = platform_device_register(&omap3evm_wlan_regulator);
 	if (ret)
 		pr_err("error registering wl12xx device: %d\n", ret);
+out:
+	return;
+free:
+	gpio_free(OMAP3EVM_WLAN_IRQ_GPIO);
 #endif
 }
 

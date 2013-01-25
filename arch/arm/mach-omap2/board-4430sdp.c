@@ -703,12 +703,30 @@ static void __init omap4_sdp4430_wifi_init(void)
 
 	omap4_sdp4430_wifi_mux_init();
 	omap4_sdp4430_wlan_data.irq = gpio_to_irq(GPIO_WIFI_IRQ);
+
+	ret = gpio_request_one(GPIO_WIFI_IRQ, GPIOF_IN, "GPIO_WIFI_IRQ");
+	if (ret) {
+		pr_err("error requesting wl12xx gpio: %d\n", ret);
+		goto out;
+	}
+
+	ret = irq_set_irq_type(gpio_to_irq(GPIO_WIFI_IRQ), IRQ_TYPE_LEVEL_HIGH);
+	if (ret) {
+		pr_err("error setting wl12xx irq type: %d\n", ret);
+		goto free;
+	}
+
 	ret = wl12xx_set_platform_data(&omap4_sdp4430_wlan_data);
 	if (ret)
 		pr_err("Error setting wl12xx data: %d\n", ret);
+
 	ret = platform_device_register(&omap_vwlan_device);
 	if (ret)
 		pr_err("Error registering wl12xx device: %d\n", ret);
+out:
+	return;
+free:
+	gpio_free(GPIO_WIFI_IRQ);
 }
 
 static void __init omap_4430sdp_init(void)

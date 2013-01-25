@@ -185,6 +185,8 @@ struct wl1271 {
 
 	int irq;
 
+	int irq_flags;
+
 	spinlock_t wl_lock;
 
 	enum wlcore_state state;
@@ -383,9 +385,6 @@ struct wl1271 {
 
 	/* Quirks of specific hardware revisions */
 	unsigned int quirks;
-
-	/* Platform limitations */
-	unsigned int platform_quirks;
 
 	/* number of currently active RX BA sessions */
 	int ba_rx_session_count;
