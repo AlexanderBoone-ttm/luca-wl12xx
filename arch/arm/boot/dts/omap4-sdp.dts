@@ -140,6 +140,16 @@
 			"DMic", "Digital Mic",
 			"Digital Mic", "Digital Mic1 Bias";
 	};
+
+	wilink_wl_en: fixedregulator@1 {
+		compatible = "regulator-fixed";
+		regulator-name = "wilink_wl_en";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		gpio = <&gpio2 22 0>; /* gpio line 54 */
+		startup-delay-us = <70000>;
+		enable-active-high;
+	};
 };
 
 &omap4_pmx_core {
@@ -152,6 +162,7 @@
 			&mcbsp2_pins
 			&dss_hdmi_pins
 			&tpd12s015_pins
+			&wilink_pins
 	>;
 
 	uart2_pins: pinmux_uart2_pins {
@@ -273,6 +284,19 @@
 		pinctrl-single,pins = <
 			0xee 0x118        /* i2c4_scl PULLUP | INPUTENABLE | MODE0 */
 			0xf0 0x118     /* i2c4_sda PULLUP | INPUTENABLE | MODE0 */
+		>;
+	};
+
+	wilink_pins: pinmux_wilink_pins {
+		pinctrl-single,pins = <
+			0x7a 0x103      /* gpio_53  INPUT | MODE3 */
+			0x7c 0x3	/* gpio_54  OUTPUT | MODE3 */
+			0x148 0x118     /* clk	    INPUT PULLUP | MODE0 */
+			0x14a 0x118     /* cmd	    INPUT PULLUP | MODE0 */
+			0x14c 0x118     /* dat0	    INPUT PULLUP | MODE0 */
+			0x14e 0x118     /* dat1	    INPUT PULLUP | MODE0 */
+			0x150 0x118     /* dat2	    INPUT PULLUP | MODE0 */
+			0x152 0x118     /* dat3	    INPUT PULLUP | MODE0 */
 		>;
 	};
 };
@@ -400,8 +424,13 @@
 };
 
 &mmc5 {
+	status = "okay";
+	vmmc-supply = <&wilink_wl_en>;
 	bus-width = <4>;
+	cap-power-off-card;
+	keep-power-in-suspend;
 	ti,non-removable;
+	ti,needs-special-hs-handling;
 };
 
 &emif1 {
