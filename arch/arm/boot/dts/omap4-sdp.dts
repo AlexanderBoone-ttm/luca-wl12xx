@@ -150,6 +150,14 @@
 		startup-delay-us = <70000>;
 		enable-active-high;
 	};
+
+	wlan {
+	     compatible = "ti,wilink7";
+	     interrupt-parent = <&gpio2>;
+	     interrupts = <21 0x4>;	/* gpio line 53, high level triggered */
+	     refclock = <2>;  		/* 26.0 MHz */
+	     tcxoclock = <2>;  		/* 26.0 MHz */
+	 };
 };
 
 &omap4_pmx_core {
