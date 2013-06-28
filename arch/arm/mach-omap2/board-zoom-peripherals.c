@@ -244,7 +244,8 @@ static struct platform_device *zoom_devices[] __initdata = {
 };
 
 static struct wl12xx_platform_data omap_zoom_wlan_data __initdata = {
-	.board_ref_clock = WL12XX_REFCLOCK_26, /* 26 MHz */
+	.ref_clock_freq = 26000000,
+	.ref_clock_xtal = false,
 };
 
 static struct omap2_hsmmc_info mmc[] = {
