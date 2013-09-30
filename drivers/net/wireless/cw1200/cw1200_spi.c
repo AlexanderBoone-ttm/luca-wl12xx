@@ -40,6 +40,7 @@ struct hwbus_priv {
 	struct cw1200_common	*core;
 	const struct cw1200_platform_data_spi *pdata;
 	spinlock_t		lock; /* Serialize all bus operations */
+	wait_queue_head_t       wq;
 	int claimed;
 };
 
@@ -61,7 +62,7 @@ static int cw1200_spi_memcpy_fromio(struct hwbus_priv *self,
 				     void *dst, int count)
 {
 	int ret, i;
-	uint16_t regaddr;
+	u16 regaddr;
 	struct spi_message      m;
 
 	struct spi_transfer     t_addr = {
@@ -76,15 +77,18 @@ static int cw1200_spi_memcpy_fromio(struct hwbus_priv *self,
 	regaddr = (SDIO_TO_SPI_ADDR(addr))<<12;
 	regaddr |= SET_READ;
 	regaddr |= (count>>1);
-	regaddr = cpu_to_le16(regaddr);
 
 #ifdef SPI_DEBUG
-	pr_info("READ : %04d from 0x%02x (%04x)\n", count, addr,
-		le16_to_cpu(regaddr));
+	pr_info("READ : %04d from 0x%02x (%04x)\n", count, addr, regaddr);
 #endif
 
+	/* Header is LE16 */
+	regaddr = cpu_to_le16(regaddr);
+
+	/* We have to byteswap if the SPI bus is limited to 8b operation
+	   or we are running on a Big Endian system
+	*/
 #if defined(__LITTLE_ENDIAN)
-	/* We have to byteswap if the SPI bus is limited to 8b operation */
 	if (self->func->bits_per_word == 8)
 #endif
 		regaddr = swab16(regaddr);
@@ -104,8 +108,10 @@ static int cw1200_spi_memcpy_fromio(struct hwbus_priv *self,
 	printk("\n");
 #endif
 
+	/* We have to byteswap if the SPI bus is limited to 8b operation
+	   or we are running on a Big Endian system
+	*/
 #if defined(__LITTLE_ENDIAN)
-	/* We have to byteswap if the SPI bus is limited to 8b operation */
 	if (self->func->bits_per_word == 8)
 #endif
 	{
@@ -122,7 +128,7 @@ static int cw1200_spi_memcpy_toio(struct hwbus_priv *self,
 				   const void *src, int count)
 {
 	int rval, i;
-	uint16_t regaddr;
+	u16 regaddr;
 	struct spi_transfer     t_addr = {
 		.tx_buf         = &regaddr,
 		.len            = sizeof(regaddr),
@@ -136,20 +142,23 @@ static int cw1200_spi_memcpy_toio(struct hwbus_priv *self,
 	regaddr = (SDIO_TO_SPI_ADDR(addr))<<12;
 	regaddr &= SET_WRITE;
 	regaddr |= (count>>1);
-	regaddr = cpu_to_le16(regaddr);
 
 #ifdef SPI_DEBUG
-	pr_info("WRITE: %04d  to  0x%02x (%04x)\n", count, addr,
-		le16_to_cpu(regaddr));
+	pr_info("WRITE: %04d  to  0x%02x (%04x)\n", count, addr, regaddr);
 #endif
 
+	/* Header is LE16 */
+	regaddr = cpu_to_le16(regaddr);
+
+	/* We have to byteswap if the SPI bus is limited to 8b operation
+	   or we are running on a Big Endian system
+	*/
 #if defined(__LITTLE_ENDIAN)
-	/* We have to byteswap if the SPI bus is limited to 8b operation */
 	if (self->func->bits_per_word == 8)
 #endif
 	{
 		uint16_t *buf = (uint16_t *)src;
-		regaddr = swab16(regaddr);
+	        regaddr = swab16(regaddr);
 		for (i = 0; i < ((count + 1) >> 1); i++)
 			buf[i] = swab16(buf[i]);
 	}
@@ -189,8 +198,11 @@ static void cw1200_spi_lock(struct hwbus_priv *self)
 {
 	unsigned long flags;
 
+	DECLARE_WAITQUEUE(wait, current);
+
 	might_sleep();
 
+	add_wait_queue(&self->wq, &wait);
 	spin_lock_irqsave(&self->lock, flags);
 	while (1) {
 		set_current_state(TASK_UNINTERRUPTIBLE);
@@ -203,6 +215,7 @@ static void cw1200_spi_lock(struct hwbus_priv *self)
 	set_current_state(TASK_RUNNING);
 	self->claimed = 1;
 	spin_unlock_irqrestore(&self->lock, flags);
+	remove_wait_queue(&self->wq, &wait);
 
 	return;
 }
@@ -214,6 +227,8 @@ static void cw1200_spi_unlock(struct hwbus_priv *self)
 	spin_lock_irqsave(&self->lock, flags);
 	self->claimed = 0;
 	spin_unlock_irqrestore(&self->lock, flags);
+	wake_up(&self->wq);
+
 	return;
 }
 
@@ -235,9 +250,10 @@ static int cw1200_spi_irq_subscribe(struct hwbus_priv *self)
 
 	pr_debug("SW IRQ subscribe\n");
 
-	ret = request_any_context_irq(self->func->irq, cw1200_spi_irq_handler,
-				      IRQF_TRIGGER_HIGH,
-				      "cw1200_wlan_irq", self);
+	ret = request_threaded_irq(self->func->irq, NULL,
+				   cw1200_spi_irq_handler,
+				   IRQF_TRIGGER_HIGH | IRQF_ONESHOT,
+				   "cw1200_wlan_irq", self);
 	if (WARN_ON(ret < 0))
 		goto exit;
 
@@ -347,7 +363,7 @@ static struct hwbus_ops cw1200_spi_hwbus_ops = {
 static int cw1200_spi_probe(struct spi_device *func)
 {
 	const struct cw1200_platform_data_spi *plat_data =
-		func->dev.platform_data;
+		dev_get_platdata(&func->dev);
 	struct hwbus_priv *self;
 	int status;
 
@@ -392,6 +408,8 @@ static int cw1200_spi_probe(struct spi_device *func)
 
 	spi_set_drvdata(func, self);
 
+	init_waitqueue_head(&self->wq);
+
 	status = cw1200_spi_irq_subscribe(self);
 
 	status = cw1200_core_probe(&cw1200_spi_hwbus_ops,
@@ -423,7 +441,7 @@ static int cw1200_spi_disconnect(struct spi_device *func)
 		}
 		kfree(self);
 	}
-	cw1200_spi_off(func->dev.platform_data);
+	cw1200_spi_off(dev_get_platdata(&func->dev));
 
 	return 0;
 }

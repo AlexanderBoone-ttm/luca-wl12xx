@@ -34,8 +34,10 @@ struct cfg80211_conn {
 		CFG80211_CONN_SCAN_AGAIN,
 		CFG80211_CONN_AUTHENTICATE_NEXT,
 		CFG80211_CONN_AUTHENTICATING,
+		CFG80211_CONN_AUTH_FAILED,
 		CFG80211_CONN_ASSOCIATE_NEXT,
 		CFG80211_CONN_ASSOCIATING,
+		CFG80211_CONN_ASSOC_FAILED,
 		CFG80211_CONN_DEAUTH,
 		CFG80211_CONN_CONNECTED,
 	} state;
@@ -164,6 +166,8 @@ static int cfg80211_conn_do_work(struct wireless_dev *wdev)
 					  NULL, 0,
 					  params->key, params->key_len,
 					  params->key_idx, NULL, 0);
+	case CFG80211_CONN_AUTH_FAILED:
+		return -ENOTCONN;
 	case CFG80211_CONN_ASSOCIATE_NEXT:
 		BUG_ON(!rdev->ops->assoc);
 		wdev->conn->state = CFG80211_CONN_ASSOCIATING;
@@ -188,10 +192,17 @@ static int cfg80211_conn_do_work(struct wireless_dev *wdev)
 					     WLAN_REASON_DEAUTH_LEAVING,
 					     false);
 		return err;
+	case CFG80211_CONN_ASSOC_FAILED:
+		cfg80211_mlme_deauth(rdev, wdev->netdev, params->bssid,
+				     NULL, 0,
+				     WLAN_REASON_DEAUTH_LEAVING, false);
+		return -ENOTCONN;
 	case CFG80211_CONN_DEAUTH:
 		cfg80211_mlme_deauth(rdev, wdev->netdev, params->bssid,
 				     NULL, 0,
 				     WLAN_REASON_DEAUTH_LEAVING, false);
+		/* free directly, disconnected event already sent */
+		cfg80211_sme_free(wdev);
 		return 0;
 	default:
 		return 0;
@@ -239,6 +250,7 @@ void cfg80211_conn_work(struct work_struct *work)
 	rtnl_unlock();
 }
 
+/* Returned bss is reference counted and must be cleaned up appropriately. */
 static struct cfg80211_bss *cfg80211_get_conn_bss(struct wireless_dev *wdev)
 {
 	struct cfg80211_registered_device *rdev = wiphy_to_dev(wdev->wiphy);
@@ -370,7 +382,7 @@ bool cfg80211_sme_rx_assoc_resp(struct wireless_dev *wdev, u16 status)
 		return true;
 	}
 
-	wdev->conn->state = CFG80211_CONN_DEAUTH;
+	wdev->conn->state = CFG80211_CONN_ASSOC_FAILED;
 	schedule_work(&rdev->conn_work);
 	return false;
 }
@@ -382,7 +394,13 @@ void cfg80211_sme_deauth(struct wireless_dev *wdev)
 
 void cfg80211_sme_auth_timeout(struct wireless_dev *wdev)
 {
-	cfg80211_sme_free(wdev);
+	struct cfg80211_registered_device *rdev = wiphy_to_dev(wdev->wiphy);
+
+	if (!wdev->conn)
+		return;
+
+	wdev->conn->state = CFG80211_CONN_AUTH_FAILED;
+	schedule_work(&rdev->conn_work);
 }
 
 void cfg80211_sme_disassoc(struct wireless_dev *wdev)
@@ -398,7 +416,13 @@ void cfg80211_sme_disassoc(struct wireless_dev *wdev)
 
 void cfg80211_sme_assoc_timeout(struct wireless_dev *wdev)
 {
-	cfg80211_sme_disassoc(wdev);
+	struct cfg80211_registered_device *rdev = wiphy_to_dev(wdev->wiphy);
+
+	if (!wdev->conn)
+		return;
+
+	wdev->conn->state = CFG80211_CONN_ASSOC_FAILED;
+	schedule_work(&rdev->conn_work);
 }
 
 static int cfg80211_sme_connect(struct wireless_dev *wdev,
@@ -557,6 +581,7 @@ static DECLARE_WORK(cfg80211_disconnect_work, disconnect_work);
  * SME event handling
  */
 
+/* This method must consume bss one way or another */
 void __cfg80211_connect_result(struct net_device *dev, const u8 *bssid,
 			       const u8 *req_ie, size_t req_ie_len,
 			       const u8 *resp_ie, size_t resp_ie_len,
@@ -572,8 +597,10 @@ void __cfg80211_connect_result(struct net_device *dev, const u8 *bssid,
 	ASSERT_WDEV_LOCK(wdev);
 
 	if (WARN_ON(wdev->iftype != NL80211_IFTYPE_STATION &&
-		    wdev->iftype != NL80211_IFTYPE_P2P_CLIENT))
+		    wdev->iftype != NL80211_IFTYPE_P2P_CLIENT)) {
+		cfg80211_put_bss(wdev->wiphy, bss);
 		return;
+	}
 
 	nl80211_send_connect_result(wiphy_to_dev(wdev->wiphy), dev,
 				    bssid, req_ie, req_ie_len,
@@ -615,19 +642,24 @@ void __cfg80211_connect_result(struct net_device *dev, const u8 *bssid,
 		kfree(wdev->connect_keys);
 		wdev->connect_keys = NULL;
 		wdev->ssid_len = 0;
-		cfg80211_put_bss(wdev->wiphy, bss);
+		if (bss) {
+			cfg80211_unhold_bss(bss_from_pub(bss));
+			cfg80211_put_bss(wdev->wiphy, bss);
+		}
 		return;
 	}
 
-	if (!bss)
+	if (!bss) {
+		WARN_ON_ONCE(!wiphy_to_dev(wdev->wiphy)->ops->connect);
 		bss = cfg80211_get_bss(wdev->wiphy, NULL, bssid,
 				       wdev->ssid, wdev->ssid_len,
 				       WLAN_CAPABILITY_ESS,
 				       WLAN_CAPABILITY_ESS);
-	if (WARN_ON(!bss))
-		return;
+		if (WARN_ON(!bss))
+			return;
+		cfg80211_hold_bss(bss_from_pub(bss));
+	}
 
-	cfg80211_hold_bss(bss_from_pub(bss));
 	wdev->current_bss = bss_from_pub(bss);
 
 	cfg80211_upload_connect_keys(wdev);
@@ -691,6 +723,7 @@ void cfg80211_connect_result(struct net_device *dev, const u8 *bssid,
 }
 EXPORT_SYMBOL(cfg80211_connect_result);
 
+/* Consumes bss object one way or another */
 void __cfg80211_roamed(struct wireless_dev *wdev,
 		       struct cfg80211_bss *bss,
 		       const u8 *req_ie, size_t req_ie_len,
@@ -767,6 +800,7 @@ void cfg80211_roamed(struct net_device *dev,
 }
 EXPORT_SYMBOL(cfg80211_roamed);
 
+/* Consumes bss object one way or another */
 void cfg80211_roamed_bss(struct net_device *dev,
 			 struct cfg80211_bss *bss, const u8 *req_ie,
 			 size_t req_ie_len, const u8 *resp_ie,
@@ -942,21 +976,19 @@ int cfg80211_disconnect(struct cfg80211_registered_device *rdev,
 			struct net_device *dev, u16 reason, bool wextev)
 {
 	struct wireless_dev *wdev = dev->ieee80211_ptr;
-	int err;
+	int err = 0;
 
 	ASSERT_WDEV_LOCK(wdev);
 
 	kfree(wdev->connect_keys);
 	wdev->connect_keys = NULL;
 
-	if (wdev->conn) {
+	if (wdev->conn)
 		err = cfg80211_sme_disconnect(wdev, reason);
-	} else if (!rdev->ops->disconnect) {
+	else if (!rdev->ops->disconnect)
 		cfg80211_mlme_down(rdev, dev);
-		err = 0;
-	} else {
+	else if (wdev->current_bss)
 		err = rdev_disconnect(rdev, dev, reason);
-	}
 
 	return err;
 }

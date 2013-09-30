@@ -98,8 +98,8 @@
 
 #define PR_EEP(_s, _val)						\
 	do {								\
-		len += snprintf(buf + len, size - len, "%20s : %10d\n",	\
-				_s, (_val));				\
+		len += scnprintf(buf + len, size - len, "%20s : %10d\n",\
+				 _s, (_val));				\
 	} while (0)
 
 #define SM(_v, _f)  (((_v) << _f##_S) & _f)
@@ -247,6 +247,8 @@ enum ath9k_hw_caps {
 	ATH9K_HW_CAP_DFS			= BIT(16),
 	ATH9K_HW_WOW_DEVICE_CAPABLE		= BIT(17),
 	ATH9K_HW_CAP_PAPRD			= BIT(18),
+	ATH9K_HW_CAP_FCC_BAND_SWITCH		= BIT(19),
+	ATH9K_HW_CAP_BT_ANT_DIV			= BIT(20),
 };
 
 /*
@@ -309,8 +311,11 @@ struct ath9k_ops_config {
 	u16 ani_poll_interval; /* ANI poll interval in ms */
 
 	/* Platform specific config */
+	u32 aspm_l1_fix;
 	u32 xlna_gpio;
+	u32 ant_ctrl_comm2g_switch_enable;
 	bool xatten_margin_cfg;
+	bool alt_mingainidx;
 };
 
 enum ath9k_int {
@@ -399,20 +404,26 @@ enum ath9k_int {
 #define MAX_CL_TAB_ENTRY	16
 #define CL_TAB_ENTRY(reg_base)	(reg_base + (4 * j))
 
+enum ath9k_cal_flags {
+	RTT_DONE,
+	PAPRD_PACKET_SENT,
+	PAPRD_DONE,
+	NFCAL_PENDING,
+	NFCAL_INTF,
+	TXIQCAL_DONE,
+	TXCLCAL_DONE,
+	SW_PKDET_DONE,
+};
+
 struct ath9k_hw_cal_data {
 	u16 channel;
 	u32 channelFlags;
 	u32 chanmode;
+	unsigned long cal_flags;
 	int32_t CalValid;
 	int8_t iCoff;
 	int8_t qCoff;
-	bool rtt_done;
-	bool paprd_packet_sent;
-	bool paprd_done;
-	bool nfcal_pending;
-	bool nfcal_interference;
-	bool done_txiqcal_once;
-	bool done_txclcal_once;
+	u8 caldac[2];
 	u16 small_signal_gain[AR9300_MAX_CHAINS];
 	u32 pa_table[AR9300_MAX_CHAINS][PAPRD_TABLE_SZ];
 	u32 num_measures[AR9300_MAX_CHAINS];
@@ -553,6 +564,7 @@ struct ath_hw_antcomb_conf {
 	u8 main_gaintb;
 	u8 alt_gaintb;
 	int lna1_lna2_delta;
+	int lna1_lna2_switch_delta;
 	u8 div_group;
 };
 
@@ -716,11 +728,14 @@ struct ath_hw_ops {
 			struct ath_hw_antcomb_conf *antconf);
 	void (*antdiv_comb_conf_set)(struct ath_hw *ah,
 			struct ath_hw_antcomb_conf *antconf);
-	void (*antctrl_shared_chain_lnadiv)(struct ath_hw *hw, bool enable);
 	void (*spectral_scan_config)(struct ath_hw *ah,
 				     struct ath_spec_scan *param);
 	void (*spectral_scan_trigger)(struct ath_hw *ah);
 	void (*spectral_scan_wait)(struct ath_hw *ah);
+
+#ifdef CONFIG_ATH9K_BTCOEX_SUPPORT
+	void (*set_bt_ant_diversity)(struct ath_hw *hw, bool enable);
+#endif
 };
 
 struct ath_nf_limits {
@@ -765,7 +780,6 @@ struct ath_hw {
 	bool aspm_enabled;
 	bool is_monitoring;
 	bool need_an_top2_fixup;
-	bool shared_chain_lnadiv;
 	u16 tx_trig_level;
 
 	u32 nf_regs[6];
@@ -892,6 +906,9 @@ struct ath_hw {
 	struct ar5416IniArray iniCckfirJapan2484;
 	struct ar5416IniArray iniModes_9271_ANI_reg;
 	struct ar5416IniArray ini_radio_post_sys2ant;
+	struct ar5416IniArray ini_modes_rxgain_5g_xlna;
+	struct ar5416IniArray ini_modes_rxgain_bb_core;
+	struct ar5416IniArray ini_modes_rxgain_bb_postamble;
 
 	struct ar5416IniArray iniMac[ATH_INI_NUM_SPLIT];
 	struct ar5416IniArray iniBB[ATH_INI_NUM_SPLIT];
@@ -1020,6 +1037,7 @@ void ath9k_hw_set11nmac2040(struct ath_hw *ah);
 void ath9k_hw_beaconinit(struct ath_hw *ah, u32 next_beacon, u32 beacon_period);
 void ath9k_hw_set_sta_beacon_timers(struct ath_hw *ah,
 				    const struct ath9k_beacon_state *bs);
+void ath9k_hw_check_nav(struct ath_hw *ah);
 bool ath9k_hw_check_alive(struct ath_hw *ah);
 
 bool ath9k_hw_setpower(struct ath_hw *ah, enum ath9k_power_mode mode);

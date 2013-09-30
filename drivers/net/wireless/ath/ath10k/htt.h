@@ -20,12 +20,8 @@
 
 #include <linux/bug.h>
 
-#include "core.h"
 #include "htc.h"
 #include "rx_desc.h"
-
-#define HTT_CURRENT_VERSION_MAJOR	2
-#define HTT_CURRENT_VERSION_MINOR	1
 
 enum htt_dbg_stats_type {
 	HTT_DBG_STATS_WAL_PDEV_TXRX = 1 << 0,
@@ -46,6 +42,9 @@ enum htt_h2t_msg_type { /* host-to-target */
 	HTT_H2T_MSG_TYPE_SYNC               = 4,
 	HTT_H2T_MSG_TYPE_AGGR_CFG           = 5,
 	HTT_H2T_MSG_TYPE_FRAG_DESC_BANK_CFG = 6,
+
+	/* This command is used for sending management frames in HTT < 3.0.
+	 * HTT >= 3.0 uses TX_FRM for everything. */
 	HTT_H2T_MSG_TYPE_MGMT_TX            = 7,
 
 	HTT_H2T_NUM_MSGS /* keep this last */
@@ -1317,7 +1316,7 @@ struct htt_rx_desc {
 #define HTT_LOG2_MAX_CACHE_LINE_SIZE 7	/* 2^7 = 128 */
 #define HTT_MAX_CACHE_LINE_SIZE_MASK ((1 << HTT_LOG2_MAX_CACHE_LINE_SIZE) - 1)
 
-struct ath10k_htt *ath10k_htt_attach(struct ath10k *ar);
+int ath10k_htt_attach(struct ath10k *ar);
 int ath10k_htt_attach_target(struct ath10k_htt *htt);
 void ath10k_htt_detach(struct ath10k_htt *htt);
 

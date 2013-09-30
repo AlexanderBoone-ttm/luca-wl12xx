@@ -534,6 +534,8 @@ int mwifiex_cmd_802_11_associate(struct mwifiex_private *priv,
 
 	mwifiex_cmd_append_tsf_tlv(priv, &pos, bss_desc);
 
+	mwifiex_11h_process_join(priv, &pos, bss_desc);
+
 	cmd->size = cpu_to_le16((u16) (pos - (u8 *) assoc) + S_DS_GEN);
 
 	/* Set the Capability info at last */
@@ -1289,8 +1291,10 @@ int mwifiex_associate(struct mwifiex_private *priv,
 {
 	u8 current_bssid[ETH_ALEN];
 
-	/* Return error if the adapter or table entry is not marked as infra */
-	if ((priv->bss_mode != NL80211_IFTYPE_STATION) ||
+	/* Return error if the adapter is not STA role or table entry
+	 * is not marked as infra.
+	 */
+	if ((GET_BSS_ROLE(priv) != MWIFIEX_BSS_ROLE_STA) ||
 	    (bss_desc->bss_mode != NL80211_IFTYPE_STATION))
 		return -1;
 
@@ -1423,6 +1427,7 @@ int mwifiex_deauthenticate(struct mwifiex_private *priv, u8 *mac)
 
 	switch (priv->bss_mode) {
 	case NL80211_IFTYPE_STATION:
+	case NL80211_IFTYPE_P2P_CLIENT:
 		return mwifiex_deauthenticate_infra(priv, mac);
 	case NL80211_IFTYPE_ADHOC:
 		return mwifiex_send_cmd_sync(priv,

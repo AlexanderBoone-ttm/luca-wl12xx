@@ -462,6 +462,14 @@ int wiphy_register(struct wiphy *wiphy)
 		return -EINVAL;
 #endif
 
+	if (WARN_ON(wiphy->coalesce &&
+		    (!wiphy->coalesce->n_rules ||
+		     !wiphy->coalesce->n_patterns) &&
+		    (!wiphy->coalesce->pattern_min_len ||
+		     wiphy->coalesce->pattern_min_len >
+			wiphy->coalesce->pattern_max_len)))
+		return -EINVAL;
+
 	if (WARN_ON(wiphy->ap_sme_capa &&
 		    !(wiphy->flags & WIPHY_FLAG_HAVE_AP_SME)))
 		return -EINVAL;
@@ -668,6 +676,7 @@ void wiphy_unregister(struct wiphy *wiphy)
 		rdev_set_wakeup(rdev, false);
 #endif
 	cfg80211_rdev_free_wowlan(rdev);
+	cfg80211_rdev_free_coalesce(rdev);
 }
 EXPORT_SYMBOL(wiphy_unregister);
 
@@ -765,6 +774,7 @@ void cfg80211_leave(struct cfg80211_registered_device *rdev,
 		cfg80211_leave_mesh(rdev, dev);
 		break;
 	case NL80211_IFTYPE_AP:
+	case NL80211_IFTYPE_P2P_GO:
 		cfg80211_stop_ap(rdev, dev);
 		break;
 	default:
@@ -775,10 +785,9 @@ void cfg80211_leave(struct cfg80211_registered_device *rdev,
 }
 
 static int cfg80211_netdev_notifier_call(struct notifier_block *nb,
-					 unsigned long state,
-					 void *ndev)
+					 unsigned long state, void *ptr)
 {
-	struct net_device *dev = ndev;
+	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 	struct wireless_dev *wdev = dev->ieee80211_ptr;
 	struct cfg80211_registered_device *rdev;
 	int ret;
@@ -934,6 +943,12 @@ static int cfg80211_netdev_notifier_call(struct notifier_block *nb,
 		 * freed.
 		 */
 		cfg80211_process_wdev_events(wdev);
+
+		if (WARN_ON(wdev->current_bss)) {
+			cfg80211_unhold_bss(wdev->current_bss);
+			cfg80211_put_bss(wdev->wiphy, &wdev->current_bss->pub);
+			wdev->current_bss = NULL;
+		}
 		break;
 	case NETDEV_PRE_UP:
 		if (!(wdev->wiphy->interface_modes & BIT(wdev->iftype)))

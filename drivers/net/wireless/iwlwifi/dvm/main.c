@@ -587,11 +587,6 @@ static void iwl_init_context(struct iwl_priv *priv, u32 ucode_flags)
 	priv->contexts[IWL_RXON_CTX_PAN].interface_modes =
 		BIT(NL80211_IFTYPE_STATION) | BIT(NL80211_IFTYPE_AP);
 
-	if (ucode_flags & IWL_UCODE_TLV_FLAGS_P2P)
-		priv->contexts[IWL_RXON_CTX_PAN].interface_modes |=
-			BIT(NL80211_IFTYPE_P2P_CLIENT) |
-			BIT(NL80211_IFTYPE_P2P_GO);
-
 	priv->contexts[IWL_RXON_CTX_PAN].ap_devtype = RXON_DEV_TYPE_CP;
 	priv->contexts[IWL_RXON_CTX_PAN].station_devtype = RXON_DEV_TYPE_2STA;
 	priv->contexts[IWL_RXON_CTX_PAN].unused_devtype = RXON_DEV_TYPE_P2P;
@@ -758,7 +753,7 @@ int iwl_alive_start(struct iwl_priv *priv)
 					 BT_COEX_PRIO_TBL_EVT_INIT_CALIB2);
 		if (ret)
 			return ret;
-	} else {
+	} else if (priv->lib->bt_params) {
 		/*
 		 * default is 2-wire BT coexexistence support
 		 */
@@ -853,14 +848,6 @@ void iwl_down(struct iwl_priv *priv)
 	lockdep_assert_held(&priv->mutex);
 
 	iwl_scan_cancel_timeout(priv, 200);
-
-	/*
-	 * If active, scanning won't cancel it, so say it expired.
-	 * No race since we hold the mutex here and a new one
-	 * can't come in at this time.
-	 */
-	if (priv->ucode_loaded && priv->cur_ucode != IWL_UCODE_INIT)
-		ieee80211_remain_on_channel_expired(priv->hw);
 
 	exit_pending =
 		test_and_set_bit(STATUS_EXIT_PENDING, &priv->status);
@@ -1002,41 +989,6 @@ static void iwl_bg_restart(struct work_struct *data)
 	}
 }
 
-
-
-
-void iwlagn_disable_roc(struct iwl_priv *priv)
-{
-	struct iwl_rxon_context *ctx = &priv->contexts[IWL_RXON_CTX_PAN];
-
-	lockdep_assert_held(&priv->mutex);
-
-	if (!priv->hw_roc_setup)
-		return;
-
-	ctx->staging.dev_type = RXON_DEV_TYPE_P2P;
-	ctx->staging.filter_flags &= ~RXON_FILTER_ASSOC_MSK;
-
-	priv->hw_roc_channel = NULL;
-
-	memset(ctx->staging.node_addr, 0, ETH_ALEN);
-
-	iwlagn_commit_rxon(priv, ctx);
-
-	ctx->is_active = false;
-	priv->hw_roc_setup = false;
-}
-
-static void iwlagn_disable_roc_work(struct work_struct *work)
-{
-	struct iwl_priv *priv = container_of(work, struct iwl_priv,
-					     hw_roc_disable_work.work);
-
-	mutex_lock(&priv->mutex);
-	iwlagn_disable_roc(priv);
-	mutex_unlock(&priv->mutex);
-}
-
 /*****************************************************************************
  *
  * driver setup and teardown
@@ -1053,8 +1005,6 @@ static void iwl_setup_deferred_work(struct iwl_priv *priv)
 	INIT_WORK(&priv->tx_flush, iwl_bg_tx_flush);
 	INIT_WORK(&priv->bt_full_concurrency, iwl_bg_bt_full_concurrency);
 	INIT_WORK(&priv->bt_runtime_config, iwl_bg_bt_runtime_config);
-	INIT_DELAYED_WORK(&priv->hw_roc_disable_work,
-			  iwlagn_disable_roc_work);
 
 	iwl_setup_scan_deferred_work(priv);
 
@@ -1082,7 +1032,6 @@ void iwl_cancel_deferred_work(struct iwl_priv *priv)
 
 	cancel_work_sync(&priv->bt_full_concurrency);
 	cancel_work_sync(&priv->bt_runtime_config);
-	cancel_delayed_work_sync(&priv->hw_roc_disable_work);
 
 	del_timer_sync(&priv->statistics_periodic);
 	del_timer_sync(&priv->ucode_trace);
@@ -1104,8 +1053,6 @@ static int iwl_init_drv(struct iwl_priv *priv)
 	priv->current_ht_config.smps = IEEE80211_SMPS_STATIC;
 	priv->missed_beacon_threshold = IWL_MISSED_BEACON_THRESHOLD_DEF;
 	priv->agg_tids_count = 0;
-
-	priv->ucode_owner = IWL_OWNERSHIP_DRIVER;
 
 	priv->rx_statistics_jiffies = jiffies;
 
@@ -1170,18 +1117,6 @@ static void iwl_option_config(struct iwl_priv *priv)
 	IWL_INFO(priv, "CONFIG_IWLWIFI_DEVICE_TRACING enabled\n");
 #else
 	IWL_INFO(priv, "CONFIG_IWLWIFI_DEVICE_TRACING disabled\n");
-#endif
-
-#ifdef CONFIG_IWLWIFI_DEVICE_TESTMODE
-	IWL_INFO(priv, "CONFIG_IWLWIFI_DEVICE_TESTMODE enabled\n");
-#else
-	IWL_INFO(priv, "CONFIG_IWLWIFI_DEVICE_TESTMODE disabled\n");
-#endif
-
-#ifdef CONFIG_IWLWIFI_P2P
-	IWL_INFO(priv, "CONFIG_IWLWIFI_P2P enabled\n");
-#else
-	IWL_INFO(priv, "CONFIG_IWLWIFI_P2P disabled\n");
 #endif
 }
 
@@ -1323,10 +1258,6 @@ static struct iwl_op_mode *iwl_op_mode_dvm_start(struct iwl_trans *trans,
 
 	ucode_flags = fw->ucode_capa.flags;
 
-#ifndef CONFIG_IWLWIFI_P2P
-	ucode_flags &= ~IWL_UCODE_TLV_FLAGS_P2P;
-#endif
-
 	if (ucode_flags & IWL_UCODE_TLV_FLAGS_PAN) {
 		priv->sta_key_max_num = STA_KEY_MAX_NUM_PAN;
 		trans_cfg.cmd_queue = IWL_IPAN_CMD_QUEUE_NUM;
@@ -1355,8 +1286,8 @@ static struct iwl_op_mode *iwl_op_mode_dvm_start(struct iwl_trans *trans,
 			IWL_BT_ANTENNA_COUPLING_THRESHOLD) ?
 			true : false;
 
-	/* enable/disable bt channel inhibition */
-	priv->bt_ch_announce = iwlwifi_mod_params.bt_ch_announce;
+	/* bt channel inhibition enabled*/
+	priv->bt_ch_announce = true;
 	IWL_DEBUG_INFO(priv, "BT channel inhibition is %s\n",
 		       (priv->bt_ch_announce) ? "On" : "Off");
 
@@ -1421,7 +1352,6 @@ static struct iwl_op_mode *iwl_op_mode_dvm_start(struct iwl_trans *trans,
 		 * if not PAN, then don't support P2P -- might be a uCode
 		 * packaging bug or due to the eeprom check above
 		 */
-		ucode_flags &= ~IWL_UCODE_TLV_FLAGS_P2P;
 		priv->sta_key_max_num = STA_KEY_MAX_NUM;
 		trans_cfg.cmd_queue = IWL_DEFAULT_CMD_QUEUE_NUM;
 
@@ -1451,7 +1381,6 @@ static struct iwl_op_mode *iwl_op_mode_dvm_start(struct iwl_trans *trans,
 	 ********************/
 	iwl_setup_deferred_work(priv);
 	iwl_setup_rx_handlers(priv);
-	iwl_testmode_init(priv);
 
 	iwl_power_initialize(priv);
 	iwl_tt_initialize(priv);
@@ -1488,7 +1417,6 @@ out_mac80211_unregister:
 	iwlagn_mac_unregister(priv);
 out_destroy_workqueue:
 	iwl_tt_exit(priv);
-	iwl_testmode_free(priv);
 	iwl_cancel_deferred_work(priv);
 	destroy_workqueue(priv->workqueue);
 	priv->workqueue = NULL;
@@ -1510,7 +1438,6 @@ static void iwl_op_mode_dvm_stop(struct iwl_op_mode *op_mode)
 
 	IWL_DEBUG_INFO(priv, "*** UNLOAD DRIVER ***\n");
 
-	iwl_testmode_free(priv);
 	iwlagn_mac_unregister(priv);
 
 	iwl_tt_exit(priv);

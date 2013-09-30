@@ -238,8 +238,8 @@ static const struct ieee80211_ops cw1200_ops = {
 	/*.cancel_remain_on_channel = cw1200_cancel_remain_on_channel,	*/
 };
 
-int cw1200_ba_rx_tids = -1;
-int cw1200_ba_tx_tids = -1;
+static int cw1200_ba_rx_tids = -1;
+static int cw1200_ba_tx_tids = -1;
 module_param(cw1200_ba_rx_tids, int, 0644);
 module_param(cw1200_ba_tx_tids, int, 0644);
 MODULE_PARM_DESC(cw1200_ba_rx_tids, "Block ACK RX TIDs");
@@ -507,7 +507,7 @@ u32 cw1200_dpll_from_clk(u16 clk_khz)
 	case 0xCB20: /* 52000 KHz */
 		return 0x07627091;
 	default:
-		pr_err("Unknown Refclk freq (0x%04x), using 2600KHz\n",
+		pr_err("Unknown Refclk freq (0x%04x), using 26000KHz\n",
 		       clk_khz);
 		return 0x0EC4F121;
 	}

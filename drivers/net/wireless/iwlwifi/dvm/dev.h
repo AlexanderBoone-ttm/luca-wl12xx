@@ -52,8 +52,6 @@
 #include "rs.h"
 #include "tt.h"
 
-#include "iwl-test.h"
-
 /* CT-KILL constants */
 #define CT_KILL_THRESHOLD_LEGACY   110 /* in Celsius */
 #define CT_KILL_THRESHOLD	   114 /* in Celsius */
@@ -542,7 +540,6 @@ struct iwl_rxon_context {
 enum iwl_scan_type {
 	IWL_SCAN_NORMAL,
 	IWL_SCAN_RADIO_RESET,
-	IWL_SCAN_ROC,
 };
 
 /**
@@ -691,10 +688,6 @@ struct iwl_priv {
 	struct iwl_spectrum_notification measure_report;
 	u8 measurement_status;
 
-#define IWL_OWNERSHIP_DRIVER	0
-#define IWL_OWNERSHIP_TM	1
-	u8 ucode_owner;
-
 	/* ucode beacon time */
 	u32 ucode_beacon_time;
 	int missed_beacon_threshold;
@@ -831,12 +824,6 @@ struct iwl_priv {
 	struct reply_tx_error_statistics reply_tx_stats;
 	struct reply_agg_tx_error_statistics reply_agg_tx_stats;
 
-	/* remain-on-channel offload support */
-	struct ieee80211_channel *hw_roc_channel;
-	struct delayed_work hw_roc_disable_work;
-	int hw_roc_duration;
-	bool hw_roc_setup, hw_roc_start_notified;
-
 	/* bt coex */
 	u8 bt_enable_flag;
 	u8 bt_status;
@@ -889,7 +876,7 @@ struct iwl_priv {
 #endif /* CONFIG_IWLWIFI_DEBUGFS */
 
 	struct iwl_nvm_data *nvm_data;
-	/* eeprom blob for debugfs/testmode */
+	/* eeprom blob for debugfs */
 	u8 *eeprom_blob;
 	size_t eeprom_blob_size;
 
@@ -904,11 +891,6 @@ struct iwl_priv {
 	struct led_classdev led;
 	unsigned long blink_on, blink_off;
 	bool led_registered;
-
-#ifdef CONFIG_IWLWIFI_DEVICE_TESTMODE
-	struct iwl_test tst;
-	u32 tm_fixed_rate;
-#endif
 
 	/* WoWLAN GTK rekey data */
 	u8 kck[NL80211_KCK_LEN], kek[NL80211_KEK_LEN];

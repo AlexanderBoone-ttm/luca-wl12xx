@@ -566,10 +566,10 @@ static void rt2x00lib_rxdone_check_ba(struct rt2x00_dev *rt2x00dev,
 
 #undef TID_CHECK
 
-		if (compare_ether_addr(ba->ra, entry->ta))
+		if (!ether_addr_equal(ba->ra, entry->ta))
 			continue;
 
-		if (compare_ether_addr(ba->ta, entry->ra))
+		if (!ether_addr_equal(ba->ta, entry->ra))
 			continue;
 
 		/* Mark BAR since we received the according BA */
@@ -1315,7 +1315,7 @@ int rt2x00lib_probe_dev(struct rt2x00_dev *rt2x00dev)
 	 * Initialize work.
 	 */
 	rt2x00dev->workqueue =
-	    alloc_ordered_workqueue(wiphy_name(rt2x00dev->hw->wiphy), 0);
+	    alloc_ordered_workqueue("%s", 0, wiphy_name(rt2x00dev->hw->wiphy));
 	if (!rt2x00dev->workqueue) {
 		retval = -ENOMEM;
 		goto exit;
