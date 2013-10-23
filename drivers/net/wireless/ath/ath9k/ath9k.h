@@ -64,7 +64,6 @@ struct ath_node;
 
 struct ath_config {
 	u16 txpowlimit;
-	u8 cabqReadytime;
 };
 
 /*************************/
@@ -207,6 +206,14 @@ struct ath_frame_info {
 	u8 baw_tracked : 1;
 };
 
+struct ath_rxbuf {
+	struct list_head list;
+	struct sk_buff *bf_mpdu;
+	void *bf_desc;
+	dma_addr_t bf_daddr;
+	dma_addr_t bf_buf_addr;
+};
+
 struct ath_buf_state {
 	u8 bf_type;
 	u8 bfs_paprd;
@@ -307,7 +314,7 @@ struct ath_rx {
 	struct ath_descdma rxdma;
 	struct ath_rx_edma rx_edma[ATH9K_RX_QUEUE_MAX];
 
-	struct ath_buf *buf_hold;
+	struct ath_rxbuf *buf_hold;
 	struct sk_buff *frag;
 
 	u32 ampdu_ref;
@@ -771,6 +778,11 @@ struct ath_softc {
 	enum spectral_mode spectral_mode;
 	struct ath_spec_scan spec_config;
 
+	struct ieee80211_vif *tx99_vif;
+	struct sk_buff *tx99_skb;
+	bool tx99_state;
+	s16 tx99_power;
+
 #ifdef CONFIG_PM_SLEEP
 	atomic_t wow_got_bmiss_intr;
 	atomic_t wow_sleep_proc_intr; /* in the middle of WoW sleep ? */
@@ -879,6 +891,7 @@ static inline u8 spectral_bitmap_weight(u8 *bins)
  */
 enum ath_fft_sample_type {
 	ATH_FFT_SAMPLE_HT20 = 1,
+	ATH_FFT_SAMPLE_HT20_40,
 };
 
 struct fft_sample_tlv {
@@ -905,6 +918,39 @@ struct fft_sample_ht20 {
 	u8 data[SPECTRAL_HT20_NUM_BINS];
 } __packed;
 
+struct fft_sample_ht20_40 {
+	struct fft_sample_tlv tlv;
+
+	u8 channel_type;
+	__be16 freq;
+
+	s8 lower_rssi;
+	s8 upper_rssi;
+
+	__be64 tsf;
+
+	s8 lower_noise;
+	s8 upper_noise;
+
+	__be16 lower_max_magnitude;
+	__be16 upper_max_magnitude;
+
+	u8 lower_max_index;
+	u8 upper_max_index;
+
+	u8 lower_bitmap_weight;
+	u8 upper_bitmap_weight;
+
+	u8 max_exp;
+
+	u8 data[SPECTRAL_HT20_40_NUM_BINS];
+} __packed;
+
+int ath9k_tx99_init(struct ath_softc *sc);
+void ath9k_tx99_deinit(struct ath_softc *sc);
+int ath9k_tx99_send(struct ath_softc *sc, struct sk_buff *skb,
+		    struct ath_tx_control *txctl);
+
 void ath9k_tasklet(unsigned long data);
 int ath_cabq_update(struct ath_softc *);
 
@@ -926,7 +972,6 @@ void ath9k_deinit_device(struct ath_softc *sc);
 void ath9k_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw);
 void ath9k_reload_chainmask_settings(struct ath_softc *sc);
 
-bool ath9k_uses_beacons(int type);
 void ath9k_spectral_scan_trigger(struct ieee80211_hw *hw);
 int ath9k_spectral_scan_config(struct ieee80211_hw *hw,
 			       enum spectral_mode spectral_mode);
